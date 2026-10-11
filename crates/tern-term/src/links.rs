@@ -213,8 +213,16 @@ mod tests {
             let text = format!("see {scheme} now");
             assert_eq!(url_in(&text, scheme), None, "{text}");
         }
-        assert_eq!(url_in("see https://.", "https"), None, "punctuation is no body");
-        assert_eq!(url_in("see https://", "https"), None, "scheme at end of line");
+        assert_eq!(
+            url_in("see https://.", "https"),
+            None,
+            "punctuation is no body"
+        );
+        assert_eq!(
+            url_in("see https://", "https"),
+            None,
+            "scheme at end of line"
+        );
     }
 
     #[test]

@@ -84,7 +84,10 @@ mod tests {
         let pass = secret("battery horse é\nstaple ");
         let blob = wrap(&pass, "4821").unwrap();
         assert!(!blob.is_empty(), "an empty seal would open to nothing");
-        assert_eq!(unwrap(&blob, "4821").unwrap().expose_secret(), pass.expose_secret());
+        assert_eq!(
+            unwrap(&blob, "4821").unwrap().expose_secret(),
+            pass.expose_secret()
+        );
     }
 
     #[test]

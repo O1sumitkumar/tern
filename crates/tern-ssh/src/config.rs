@@ -561,8 +561,10 @@ mod tests {
 
     #[test]
     fn proxy_jump_single_hop_takes_the_hop_alias_settings() {
-        let c = cfg("Host inner\n  HostName 10.9.9.9\n  User me\n  ProxyJump bastion\n\
-                     Host bastion\n  HostName 203.0.113.5\n  Port 2200\n  User jump\n  IdentityFile /keys/jump\n");
+        let c = cfg(
+            "Host inner\n  HostName 10.9.9.9\n  User me\n  ProxyJump bastion\n\
+                     Host bastion\n  HostName 203.0.113.5\n  Port 2200\n  User jump\n  IdentityFile /keys/jump\n",
+        );
         let r = resolve(Some(&c), "inner");
         assert_eq!(
             r.proxy_jump,
@@ -627,7 +629,8 @@ mod tests {
 
     #[test]
     fn keep_alive_settings_come_from_config_or_the_defaults() {
-        let c = cfg("Host a\n  ServerAliveInterval 10\n  ServerAliveCountMax 5\nHost b\n  User x\n");
+        let c =
+            cfg("Host a\n  ServerAliveInterval 10\n  ServerAliveCountMax 5\nHost b\n  User x\n");
         let a = parse_target("u@a", Some(&c)).unwrap();
         assert_eq!(
             (a.server_alive_interval, a.server_alive_count_max),
@@ -636,13 +639,17 @@ mod tests {
         let b = parse_target("u@b", Some(&c)).unwrap();
         assert_eq!(
             (b.server_alive_interval, b.server_alive_count_max),
-            (DEFAULT_SERVER_ALIVE_INTERVAL, DEFAULT_SERVER_ALIVE_COUNT_MAX)
+            (
+                DEFAULT_SERVER_ALIVE_INTERVAL,
+                DEFAULT_SERVER_ALIVE_COUNT_MAX
+            )
         );
     }
 
     #[test]
     fn host_star_supplies_defaults_and_the_first_value_wins() {
-        let c = cfg("Host web\n  HostName 10.1.1.1\n  Port 2200\nHost *\n  User deploy\n  Port 2022\n");
+        let c =
+            cfg("Host web\n  HostName 10.1.1.1\n  Port 2200\nHost *\n  User deploy\n  Port 2022\n");
         let s = parse_target("web", Some(&c)).unwrap();
         assert_eq!(
             (s.host.as_str(), s.port, s.user.as_str()),

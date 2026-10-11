@@ -669,13 +669,21 @@ mod tests {
 
         #[test]
         fn valid_json_of_the_wrong_shape_is_corrupt() {
-            for plaintext in [&b"{\"version\":1}"[..], b"[]", b"null", b"{\"version\":\"1\",\"entries\":[]}"] {
+            for plaintext in [
+                &b"{\"version\":1}"[..],
+                b"[]",
+                b"null",
+                b"{\"version\":\"1\",\"entries\":[]}",
+            ] {
                 let sealed = Vault::new(pass("p"))
                     .with_work_factor(4)
                     .seal(plaintext)
                     .unwrap();
                 let err = Vault::unlock_bytes(&sealed, pass("p")).unwrap_err();
-                assert!(matches!(err, VaultError::Corrupt(_)), "{plaintext:?}: {err:?}");
+                assert!(
+                    matches!(err, VaultError::Corrupt(_)),
+                    "{plaintext:?}: {err:?}"
+                );
             }
         }
 
@@ -724,9 +732,8 @@ mod tests {
             assert!(Vault::unlock(&path, pass("correct horse")).is_err());
             assert!(Vault::unlock(&path, pass("wrong")).is_err());
             // Re-keying must fail at the open step, before anything is written.
-            let err =
-                Vault::change_passphrase_with(&path, pass("correct horse"), pass("new"), 4)
-                    .unwrap_err();
+            let err = Vault::change_passphrase_with(&path, pass("correct horse"), pass("new"), 4)
+                .unwrap_err();
             assert!(matches!(err, VaultError::Corrupt(_)), "{err:?}");
 
             assert_eq!(std::fs::read(&path).unwrap(), bytes);

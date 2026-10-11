@@ -283,10 +283,7 @@ mod tests {
 
     #[test]
     fn failure_at_a_jump_host_names_the_hop_it_happened_at() {
-        let f = Failure::Jump(
-            "bastion.example:2222".into(),
-            Box::new(Failure::AuthFailed),
-        );
+        let f = Failure::Jump("bastion.example:2222".into(), Box::new(Failure::AuthFailed));
         assert_eq!(
             f.to_string(),
             "permission denied: the server accepted none of the passwords or keys tried \
