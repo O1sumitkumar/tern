@@ -319,7 +319,7 @@ impl Vault {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::*;
 
@@ -551,6 +551,187 @@ mod tests {
         let back = v.reopen(&bytes).unwrap();
         let info = keys::inspect(back.get(&key).unwrap().expose_secret()).unwrap();
         assert_eq!(info, g.info);
+    }
+
+    /// A vault file whose plaintext is `contents`, sealed under `passphrase`.
+    fn sealed_contents(contents: &Contents, passphrase: &str) -> Vec<u8> {
+        let plaintext = serde_json::to_vec(contents).unwrap();
+        Vault::new(pass(passphrase))
+            .with_work_factor(4)
+            .seal(&plaintext)
+            .unwrap()
+    }
+
+    mod hostile {
+        use std::collections::HashMap;
+
+        use proptest::prelude::*;
+
+        use super::*;
+
+        /// Unique non-empty names; the name's length picks which kind of key it becomes, so both
+        /// kinds are exercised and uniqueness of the name keeps the keys unique.
+        fn key_for(name: &str) -> Key {
+            if name.chars().count().is_multiple_of(2) {
+                Key::SshKey { name: name.into() }
+            } else {
+                Key::KeyPassphrase { path: name.into() }
+            }
+        }
+
+        fn entries() -> impl Strategy<Value = HashMap<String, String>> {
+            // `\PC` is any printable char (unicode); the literals add whitespace and controls.
+            let text = prop_oneof![
+                "\\PC{0,24}",
+                "[ \\t\\n\\r]{0,6}\\PC{0,6}[ \\t\\n\\r]{0,6}",
+                Just("pässwörd 密码 🔑\n".to_owned()),
+            ];
+            let name = prop_oneof!["\\PC{1,16}", "[ \\t]{1,4}x[ \\t]{0,4}"];
+            prop::collection::hash_map(name, text, 0..6)
+        }
+
+        fn passphrase() -> impl Strategy<Value = String> {
+            "\\PC{1,16}"
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(24))]
+
+            #[test]
+            fn round_trip_returns_exactly_the_entries_put_in(
+                map in entries(),
+                phrase in passphrase(),
+            ) {
+                let mut v = Vault::new(pass(&phrase)).with_work_factor(4);
+                for (name, value) in &map {
+                    v.set(key_for(name), pass(value));
+                }
+                let bytes = v.to_bytes().unwrap();
+
+                let back = Vault::unlock_bytes(&bytes, pass(&phrase)).unwrap();
+
+                prop_assert_eq!(back.len(), map.len());
+                for (name, value) in &map {
+                    let got = back.get(&key_for(name));
+                    prop_assert_eq!(got.map(|s| s.expose_secret().to_owned()), Some(value.clone()));
+                }
+            }
+
+            #[test]
+            fn another_passphrase_is_wrong_passphrase_not_corrupt(
+                map in entries(),
+                right in passphrase(),
+                wrong in passphrase(),
+            ) {
+                prop_assume!(right != wrong);
+                let mut v = Vault::new(pass(&right)).with_work_factor(4);
+                for (name, value) in &map {
+                    v.set(key_for(name), pass(value));
+                }
+                let bytes = v.to_bytes().unwrap();
+
+                let err = Vault::unlock_bytes(&bytes, pass(&wrong)).unwrap_err();
+
+                prop_assert!(matches!(err, VaultError::WrongPassphrase), "{:?}", err);
+            }
+
+            #[test]
+            fn any_truncation_of_a_real_vault_is_refused(
+                map in entries(),
+                cut in 0.0f64..1.0,
+            ) {
+                let mut v = Vault::new(pass("correct horse")).with_work_factor(4);
+                for (name, value) in &map {
+                    v.set(key_for(name), pass(value));
+                }
+                let bytes = v.to_bytes().unwrap();
+                let keep = (bytes.len() as f64 * cut) as usize; // strictly shorter than `bytes`
+
+                prop_assert!(Vault::unlock_bytes(&bytes[..keep], pass("correct horse")).is_err());
+            }
+
+            #[test]
+            fn arbitrary_bytes_are_refused(bytes in prop::collection::vec(any::<u8>(), 0..256)) {
+                prop_assert!(Vault::unlock_bytes(&bytes, pass("x")).is_err());
+            }
+
+            #[test]
+            fn arbitrary_bytes_behind_a_valid_age_envelope_are_corrupt(
+                bytes in prop::collection::vec(any::<u8>(), 0..128),
+            ) {
+                let sealed = Vault::new(pass("p")).with_work_factor(4).seal(&bytes).unwrap();
+
+                let err = Vault::unlock_bytes(&sealed, pass("p")).unwrap_err();
+
+                prop_assert!(matches!(err, VaultError::Corrupt(_)), "{:?}", err);
+            }
+        }
+
+        #[test]
+        fn valid_json_of_the_wrong_shape_is_corrupt() {
+            for plaintext in [&b"{\"version\":1}"[..], b"[]", b"null", b"{\"version\":\"1\",\"entries\":[]}"] {
+                let sealed = Vault::new(pass("p"))
+                    .with_work_factor(4)
+                    .seal(plaintext)
+                    .unwrap();
+                let err = Vault::unlock_bytes(&sealed, pass("p")).unwrap_err();
+                assert!(matches!(err, VaultError::Corrupt(_)), "{plaintext:?}: {err:?}");
+            }
+        }
+
+        #[test]
+        fn a_newer_vault_version_is_refused_naming_the_version() {
+            let newer = Contents {
+                version: VERSION + 1,
+                entries: vec![Entry {
+                    key: login("grape"),
+                    value: "hunter2".into(),
+                }],
+            };
+            let bytes = sealed_contents(&newer, "correct horse");
+
+            let err = Vault::unlock_bytes(&bytes, pass("correct horse")).unwrap_err();
+
+            let VaultError::Corrupt(msg) = err else {
+                panic!("expected Corrupt, got {err:?}");
+            };
+            assert!(msg.contains("version"), "{msg}");
+            assert!(msg.contains(&(VERSION + 1).to_string()), "{msg}");
+        }
+
+        #[test]
+        fn an_older_vault_version_is_refused_too() {
+            let older = Contents {
+                version: VERSION - 1,
+                entries: Vec::new(),
+            };
+            let bytes = sealed_contents(&older, "p");
+            let err = Vault::unlock_bytes(&bytes, pass("p")).unwrap_err();
+            assert!(matches!(err, VaultError::Corrupt(_)), "{err:?}");
+        }
+
+        #[test]
+        fn a_failed_load_never_touches_the_file_on_disk() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("vault.age");
+            let newer = Contents {
+                version: VERSION + 1,
+                entries: Vec::new(),
+            };
+            let bytes = sealed_contents(&newer, "correct horse");
+            std::fs::write(&path, &bytes).unwrap();
+
+            assert!(Vault::unlock(&path, pass("correct horse")).is_err());
+            assert!(Vault::unlock(&path, pass("wrong")).is_err());
+            // Re-keying must fail at the open step, before anything is written.
+            let err =
+                Vault::change_passphrase_with(&path, pass("correct horse"), pass("new"), 4)
+                    .unwrap_err();
+            assert!(matches!(err, VaultError::Corrupt(_)), "{err:?}");
+
+            assert_eq!(std::fs::read(&path).unwrap(), bytes);
+            assert!(!path.with_extension("age.tmp").exists());
+        }
     }
 
     #[test]

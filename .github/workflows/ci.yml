@@ -17,3 +17,19 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
+  # Proves the critical crates' tests can actually fail. Advisory, not a gate:
+  # a surviving mutant is a test to strengthen, triaged from the run's output.
+  mutants:
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-mutants --locked
+      - run: cargo mutants -p tern-vault -p tern-sync --no-shuffle
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutants-report
+          path: mutants.out/

@@ -547,6 +547,48 @@ mod tests {
         assert!(matches!(load(dir.path()), Err(StoreError::Unreadable(_))));
     }
 
+    /// A crash between the temp write and the rename leaves a garbage `.tmp` beside the good
+    /// file; `load` reads the committed file and the next `save` replaces the stray.
+    #[test]
+    fn a_stray_tmp_beside_a_good_file_changes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = vec![conn("web", "10.0.0.5", "deploy")];
+        save(dir.path(), &first).unwrap();
+        std::fs::write(dir.path().join("hosts.json.tmp"), "{ half writ").unwrap();
+        assert_eq!(load(dir.path()).unwrap(), first);
+
+        let second = vec![
+            conn("web", "10.0.0.5", "deploy"),
+            conn("db", "10.0.0.6", "root"),
+        ];
+        save(dir.path(), &second).unwrap();
+        assert_eq!(load(dir.path()).unwrap(), second);
+    }
+
+    /// The rename never happened: only the `.tmp` exists. It is not the hosts file.
+    #[test]
+    fn a_tmp_without_the_real_file_is_not_loaded() {
+        let dir = tempfile::tempdir().unwrap();
+        let tmp =
+            r#"{"version":1,"connections":[{"name":"ghost","host":"h","port":22,"user":"u"}]}"#;
+        std::fs::write(dir.path().join("hosts.json.tmp"), tmp).unwrap();
+        assert!(load(dir.path()).unwrap().is_empty());
+    }
+
+    /// A file from a newer tern is refused, and left exactly as it was.
+    #[test]
+    fn a_newer_version_is_refused_and_left_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE_NAME);
+        let newer = format!(
+            r#"{{"version":{},"connections":[{{"name":"web","host":"h","port":22,"user":"u"}}]}}"#,
+            VERSION + 1
+        );
+        std::fs::write(&path, &newer).unwrap();
+        assert!(matches!(load(dir.path()), Err(StoreError::Unreadable(_))));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), newer);
+    }
+
     #[test]
     fn duplicating_an_ssh_config_host_keeps_its_fields() {
         let entry = HostEntry {

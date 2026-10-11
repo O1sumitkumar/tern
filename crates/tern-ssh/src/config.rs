@@ -558,4 +558,123 @@ mod tests {
                 .forward_agent
         );
     }
+
+    #[test]
+    fn proxy_jump_single_hop_takes_the_hop_alias_settings() {
+        let c = cfg("Host inner\n  HostName 10.9.9.9\n  User me\n  ProxyJump bastion\n\
+                     Host bastion\n  HostName 203.0.113.5\n  Port 2200\n  User jump\n  IdentityFile /keys/jump\n");
+        let r = resolve(Some(&c), "inner");
+        assert_eq!(
+            r.proxy_jump,
+            [JumpHop {
+                host: "203.0.113.5".into(),
+                port: 2200,
+                user: Some("jump".into()),
+                identity_files: vec![PathBuf::from("/keys/jump")],
+            }]
+        );
+        assert_eq!(r.proxy_command, None);
+    }
+
+    #[test]
+    fn proxy_jump_chain_keeps_hop_order_and_each_hops_own_port_and_user() {
+        let c = cfg("Host edge\n  HostName 198.51.100.7\n  User gw\n\
+                     Host core\n  HostName 10.0.0.9\n  Port 2300\n\
+                     Host inner\n  HostName 10.9.9.9\n  ProxyJump edge,alice@10.0.0.1:2022,ssh://core\n");
+        let hops = resolve(Some(&c), "inner").proxy_jump;
+        let shown: Vec<_> = hops
+            .iter()
+            .map(|h| (h.user.as_deref(), h.host.as_str(), h.port))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                (Some("gw"), "198.51.100.7", 22),
+                (Some("alice"), "10.0.0.1", 2022),
+                (None, "10.0.0.9", 2300),
+            ]
+        );
+    }
+
+    #[test]
+    fn proxy_jump_none_is_no_hop_and_an_unreadable_hop_keeps_its_text() {
+        let none = cfg("Host a\n  ProxyJump none\n");
+        assert!(resolve(Some(&none), "a").proxy_jump.is_empty());
+        let bad = cfg("Host a\n  ProxyJump bob@\n");
+        assert_eq!(
+            resolve(Some(&bad), "a").proxy_jump,
+            [JumpHop {
+                host: "bob@".into(),
+                port: 0,
+                user: None,
+                identity_files: Vec::new(),
+            }]
+        );
+    }
+
+    #[test]
+    fn whichever_of_proxyjump_and_proxycommand_comes_first_wins() {
+        let cmd_first = cfg("Host a\n  ProxyCommand nc gw 22\n  ProxyJump bastion\n");
+        let r = resolve(Some(&cmd_first), "a");
+        assert_eq!(
+            (r.proxy_command.as_deref(), r.proxy_jump.len()),
+            (Some("nc gw 22"), 0)
+        );
+        let jump_first = cfg("Host a\n  ProxyJump bastion\n  ProxyCommand nc gw 22\n");
+        let r = resolve(Some(&jump_first), "a");
+        assert_eq!((r.proxy_command, r.proxy_jump.len()), (None, 1));
+    }
+
+    #[test]
+    fn keep_alive_settings_come_from_config_or_the_defaults() {
+        let c = cfg("Host a\n  ServerAliveInterval 10\n  ServerAliveCountMax 5\nHost b\n  User x\n");
+        let a = parse_target("u@a", Some(&c)).unwrap();
+        assert_eq!(
+            (a.server_alive_interval, a.server_alive_count_max),
+            (Duration::from_secs(10), 5)
+        );
+        let b = parse_target("u@b", Some(&c)).unwrap();
+        assert_eq!(
+            (b.server_alive_interval, b.server_alive_count_max),
+            (DEFAULT_SERVER_ALIVE_INTERVAL, DEFAULT_SERVER_ALIVE_COUNT_MAX)
+        );
+    }
+
+    #[test]
+    fn host_star_supplies_defaults_and_the_first_value_wins() {
+        let c = cfg("Host web\n  HostName 10.1.1.1\n  Port 2200\nHost *\n  User deploy\n  Port 2022\n");
+        let s = parse_target("web", Some(&c)).unwrap();
+        assert_eq!(
+            (s.host.as_str(), s.port, s.user.as_str()),
+            ("10.1.1.1", 2200, "deploy")
+        );
+        let s = parse_target("other", Some(&c)).unwrap();
+        assert_eq!((s.host.as_str(), s.port), ("other", 2022));
+    }
+
+    #[test]
+    fn identity_files_from_every_matching_block_are_offered_in_order() {
+        let c = cfg("Host web\n  IdentityFile /keys/web\nHost *\n  IdentityFile /keys/shared\n");
+        assert_eq!(
+            parse_target("web", Some(&c)).unwrap().identity_files,
+            [PathBuf::from("/keys/web"), PathBuf::from("/keys/shared")]
+        );
+    }
+
+    #[test]
+    fn a_host_line_lists_each_concrete_name_and_skips_patterns() {
+        let c = cfg("Host alpha beta *.lan !gamma\n  User ops\n");
+        let names: Vec<_> = hosts_from(&c).into_iter().map(|h| h.alias).collect();
+        assert_eq!(names, ["alpha", "beta"]);
+    }
+
+    #[test]
+    fn proxy_command_expands_user_repeated_port_and_keeps_a_trailing_percent() {
+        assert_eq!(
+            expand_proxy_command("ssh -l %r %h", "bastion.example", 2200, "bob"),
+            "ssh -l bob bastion.example"
+        );
+        assert_eq!(expand_proxy_command("%p-%p", "h", 2200, "u"), "2200-2200");
+        assert_eq!(expand_proxy_command("echo 100%", "h", 22, "u"), "echo 100%");
+    }
 }

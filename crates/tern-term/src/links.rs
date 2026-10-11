@@ -164,6 +164,89 @@ mod tests {
     }
 
     #[test]
+    fn a_run_of_trailing_punctuation_is_all_trimmed() {
+        for (text, want) in [
+            ("https://a.test/x...", "https://a.test/x"),
+            ("https://a.test/x?!", "https://a.test/x"),
+            ("https://a.test/x:", "https://a.test/x"),
+            ("(https://a.test/x.)", "https://a.test/x"),
+            ("<https://a.test/x>", "https://a.test/x"),
+            ("\"https://a.test/x\"", "https://a.test/x"),
+        ] {
+            assert_eq!(url_in(text, "https").as_deref(), Some(want), "{text}");
+        }
+    }
+
+    #[test]
+    fn only_unbalanced_closing_parentheses_are_trimmed() {
+        for (text, want) in [
+            ("(https://a.test/a_(b))", "https://a.test/a_(b)"),
+            ("(https://a.test/(a)).", "https://a.test/(a)"),
+            ("https://a.test/(a)(b)", "https://a.test/(a)(b)"),
+            ("https://a.test/((a))", "https://a.test/((a))"),
+        ] {
+            assert_eq!(url_in(text, "https").as_deref(), Some(want), "{text}");
+        }
+    }
+
+    #[test]
+    fn balanced_square_brackets_stay_in_the_url() {
+        for (text, want) in [
+            ("https://a.test/a[1]", "https://a.test/a[1]"),
+            ("see https://a.test/a[1].", "https://a.test/a[1]"),
+            ("https://a.test/a[1]]", "https://a.test/a[1]"),
+        ] {
+            assert_eq!(url_in(text, "https").as_deref(), Some(want), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_url_at_the_start_of_the_line_that_is_not_under_the_pointer() {
+        // The scan resumes after the URL at index 0 and must not step before it.
+        assert_eq!(url_in("https://a.test b", " b"), None);
+        assert_eq!(url_in("https:// b", " b"), None, "bare scheme at index 0");
+    }
+
+    #[test]
+    fn a_bare_scheme_is_not_a_link() {
+        for scheme in ["https://", "http://", "ftp://", "mailto:"] {
+            let text = format!("see {scheme} now");
+            assert_eq!(url_in(&text, scheme), None, "{text}");
+        }
+        assert_eq!(url_in("see https://.", "https"), None, "punctuation is no body");
+        assert_eq!(url_in("see https://", "https"), None, "scheme at end of line");
+    }
+
+    #[test]
+    fn scheme_is_matched_in_any_case_and_kept_as_written() {
+        assert_eq!(
+            url_in("see HTTPS://A.Test/X.", "HTTPS").as_deref(),
+            Some("HTTPS://A.Test/X")
+        );
+    }
+
+    #[test]
+    fn osc8_target_wins_over_the_text_it_wraps() {
+        // The visible text is a URL, but the program declared another target: that one opens.
+        let mut t = Terminal::new(40, 3);
+        t.process(b"\x1b]8;;https://b.test/other\x07https://a.test/real\x1b]8;;\x07");
+        let link = t.link_at(0, 3).unwrap();
+        assert_eq!(link.uri, "https://b.test/other");
+        assert_eq!(link.segments, [(0, 0, 19)]);
+    }
+
+    #[test]
+    fn two_osc8_runs_separated_by_a_space_are_two_links() {
+        let mut t = Terminal::new(40, 3);
+        t.process(
+            b"\x1b]8;;https://x.test\x1b\\one\x1b]8;;\x1b\\ \x1b]8;;https://x.test\x1b\\two\x1b]8;;\x1b\\",
+        );
+        assert_eq!(t.link_at(0, 1).unwrap().segments, [(0, 0, 3)]);
+        assert_eq!(t.link_at(0, 3), None, "the space between them is no link");
+        assert_eq!(t.link_at(0, 5).unwrap().segments, [(0, 4, 7)]);
+    }
+
+    #[test]
     fn link_wrapped_over_two_rows_is_one_link_with_two_segments() {
         // 12 columns: the URL starts at column 4 and wraps.
         let mut t = Terminal::new(12, 4);
@@ -194,5 +277,31 @@ mod tests {
         let mut t = Terminal::new(40, 3);
         t.process(b"\x1b]8;;file:///etc/passwd\x1b\\click\x1b]8;;\x1b\\");
         assert_eq!(t.link_at(0, 1), None);
+    }
+
+    mod property {
+        use proptest::prelude::*;
+
+        use super::*;
+
+        proptest! {
+            // The expected URL is the generated one. Punctuation after it, and any closer
+            // with no opener inside the URL, must not be part of the link.
+            #[test]
+            fn url_is_found_exactly_when_surrounded_by_prose(
+                host in "[a-z]{1,8}",
+                segments in prop::collection::vec(
+                    prop_oneof!["[a-z0-9]{1,6}", "[a-z0-9]{1,4}".prop_map(|s| format!("({s})"))],
+                    0..4,
+                ),
+                before in prop::sample::select(vec!["", "see ", "(", "[", "\""]),
+                trail in "[.,;:!?)]{0,4}",
+            ) {
+                let path: String = segments.iter().map(|s| format!("/{s}")).collect();
+                let url = format!("https://{host}.test{path}");
+                let text = format!("{before}{url}{trail}");
+                prop_assert_eq!(url_in(&text, "https"), Some(url));
+            }
+        }
     }
 }

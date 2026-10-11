@@ -361,6 +361,58 @@ mod tests {
     }
 
     #[test]
+    fn refresh_keeps_a_middle_match_current_as_history_grows() {
+        let mut t = Terminal::new(20, 3);
+        t.process(b"err 1\r\nerr 2\r\nerr 3\r\n");
+        assert_eq!(t.search("err"), 3);
+        t.search_step(true);
+        assert_eq!(t.search_index(), Some(1), "on 'err 2'");
+        t.process(b"x\r\ny\r\nz\r\n");
+        assert_eq!(t.search_count(), 3);
+        assert_eq!(t.search_index(), Some(1), "still on 'err 2'");
+    }
+
+    #[test]
+    fn refresh_with_no_matches_left_has_no_current_match() {
+        let mut t = Terminal::new(20, 6);
+        t.process(b"err one");
+        assert_eq!(t.search("err"), 1);
+        assert_eq!(t.search_index(), Some(0));
+        t.process(b"\x1bc");
+        assert_eq!(t.search_count(), 0);
+        assert_eq!(t.search_index(), None);
+        // A query that never matched stays at no match through new output.
+        assert_eq!(t.search("zebra"), 0);
+        t.process(b"more");
+        assert_eq!(t.search_count(), 0);
+        assert_eq!(t.search_index(), None);
+    }
+
+    #[test]
+    fn first_matches_arriving_after_an_empty_search_select_the_newest() {
+        let mut t = Terminal::new(20, 6);
+        t.process(b"nothing yet");
+        assert_eq!(t.search("err"), 0);
+        assert_eq!(t.search_index(), None);
+        t.process(b"\r\nerr a\r\nerr b");
+        assert_eq!(t.search_count(), 2);
+        assert_eq!(t.search_index(), Some(1));
+    }
+
+    #[test]
+    fn current_match_clamps_when_every_remaining_match_is_older() {
+        let mut t = Terminal::new(20, 6);
+        t.process(b"err a\r\nx\r\nerr b");
+        assert_eq!(t.search("err"), 2);
+        assert_eq!(t.search_index(), Some(1), "on 'err b' at row 2");
+        // The screen is wiped and one match is written above where 'err b' was.
+        t.process(b"\x1bc");
+        t.process(b"err c");
+        assert_eq!(t.search_count(), 1);
+        assert_eq!(t.search_index(), Some(0));
+    }
+
+    #[test]
     fn clearing_removes_marks() {
         let mut t = Terminal::new(20, 3);
         t.process(b"find me");
@@ -370,6 +422,86 @@ mod tests {
         assert!(marked(&t, SearchMark::Current).is_empty());
         assert_eq!(t.search_count(), 0);
         assert_eq!(t.search(""), 0);
+    }
+
+    #[test]
+    fn every_occurrence_is_found_at_its_own_position() {
+        // "ab" at (0,0) and (0,4), then on the next row at (1,1).
+        let mut t = Terminal::new(20, 3);
+        t.process(b"ab cab\r\nxab");
+        assert_eq!(t.search("ab"), 3);
+        let spans: Vec<_> = t
+            .visible_matches()
+            .iter()
+            .map(|(m, _)| (*m.start(), *m.end()))
+            .collect();
+        assert_eq!(
+            spans,
+            [
+                (point(0, 0), point(0, 1)),
+                (point(0, 4), point(0, 5)),
+                (point(1, 1), point(1, 2)),
+            ]
+        );
+    }
+
+    #[test]
+    fn occurrences_do_not_overlap() {
+        // "aa" in "aaaa" is two matches, not three: the search resumes past each match.
+        let mut t = Terminal::new(10, 2);
+        t.process(b"aaaa");
+        assert_eq!(t.search("aa"), 2);
+        let spans: Vec<_> = t
+            .visible_matches()
+            .iter()
+            .map(|(m, _)| (*m.start(), *m.end()))
+            .collect();
+        assert_eq!(
+            spans,
+            [(point(0, 0), point(0, 1)), (point(0, 2), point(0, 3))]
+        );
+    }
+
+    #[test]
+    fn several_matches_after_a_soft_wrap_are_all_found() {
+        // 10 columns: the first "hello" wraps onto row 1; the second follows on that row.
+        let mut t = Terminal::new(10, 4);
+        t.process(b"xxxxxxxhello hello");
+        assert_eq!(t.search("hello"), 2);
+        let spans: Vec<_> = t
+            .visible_matches()
+            .iter()
+            .map(|(m, _)| (*m.start(), *m.end()))
+            .collect();
+        assert_eq!(
+            spans,
+            [(point(0, 7), point(1, 1)), (point(1, 3), point(1, 7))]
+        );
+    }
+
+    #[test]
+    fn empty_query_ends_an_active_search_and_marks_nothing() {
+        let mut t = Terminal::new(20, 3);
+        t.process(b"find me");
+        assert_eq!(t.search("find"), 1);
+        assert_eq!(t.search(""), 0);
+        assert_eq!(t.search_query(), None);
+        assert_eq!(t.search_index(), None);
+        assert!(t.visible_matches().is_empty());
+        assert!(marked(&t, SearchMark::Match).is_empty());
+        assert!(marked(&t, SearchMark::Current).is_empty());
+    }
+
+    #[test]
+    fn query_with_no_match_has_no_current_match() {
+        let mut t = Terminal::new(20, 3);
+        t.process(b"find me");
+        assert_eq!(t.search("zebra"), 0);
+        assert_eq!(t.search_query(), Some("zebra"));
+        assert_eq!(t.search_index(), None);
+        assert!(marked(&t, SearchMark::Match).is_empty());
+        assert!(marked(&t, SearchMark::Current).is_empty());
+        assert!(!t.search_step(false), "nothing to step to");
     }
 
     fn key(source: &str) -> Keystroke {
@@ -423,10 +555,35 @@ mod tests {
     }
 
     #[test]
+    fn empty_or_control_text_does_not_type() {
+        let mut q = "a".to_string();
+        assert_eq!(apply_key(&mut q, &typed("b", "")), FindKey::Ignored);
+        assert_eq!(apply_key(&mut q, &typed("tab", "\t")), FindKey::Ignored);
+        assert_eq!(apply_key(&mut q, &typed("x", "x\u{7}")), FindKey::Ignored);
+        assert_eq!(q, "a");
+    }
+
+    #[test]
     fn paste_takes_the_first_line() {
         let mut q = "a".to_string();
         assert_eq!(paste_into(&mut q, "bc\nrm -rf"), FindKey::Edited);
         assert_eq!(q, "abc");
         assert_eq!(paste_into(&mut q, ""), FindKey::Ignored);
+    }
+
+    mod property {
+        use proptest::prelude::*;
+
+        use super::*;
+
+        proptest! {
+            // The oracle is std's non-overlapping `matches`, an independent implementation.
+            #[test]
+            fn match_count_equals_non_overlapping_occurrences(text in "[ab ]{0,30}") {
+                let mut t = Terminal::new(40, 3);
+                t.process(text.as_bytes());
+                prop_assert_eq!(t.search("aa"), text.matches("aa").count());
+            }
+        }
     }
 }

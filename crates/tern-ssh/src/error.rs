@@ -271,4 +271,67 @@ mod tests {
             Disconnect::Unreachable
         );
     }
+
+    #[test]
+    fn host_key_changed_message_names_the_known_hosts_line() {
+        assert_eq!(
+            Failure::HostKeyChanged { line: 7 }.to_string(),
+            "host key changed: the key presented by the server does not match known_hosts line 7; \
+             connection refused (possible man-in-the-middle attack)"
+        );
+    }
+
+    #[test]
+    fn failure_at_a_jump_host_names_the_hop_it_happened_at() {
+        let f = Failure::Jump(
+            "bastion.example:2222".into(),
+            Box::new(Failure::AuthFailed),
+        );
+        assert_eq!(
+            f.to_string(),
+            "permission denied: the server accepted none of the passwords or keys tried \
+             (while going through jump host bastion.example:2222)"
+        );
+    }
+
+    #[test]
+    fn bad_jump_entry_is_quoted_as_written() {
+        assert_eq!(
+            Failure::BadJump("bob@".into()).to_string(),
+            r#"invalid ProxyJump host "bob@""#
+        );
+    }
+
+    #[test]
+    fn russh_timeouts_are_timeouts_and_socket_errors_keep_their_kind() {
+        let keepalive = Failure::from(russh::Error::KeepaliveTimeout);
+        assert_eq!(classify(&keepalive, true), Disconnect::Timeout);
+        let inactivity = Failure::from(russh::Error::InactivityTimeout);
+        assert_eq!(classify(&inactivity, true), Disconnect::Timeout);
+        let reset = Failure::from(russh::Error::IO(Error::from(ErrorKind::ConnectionReset)));
+        assert_eq!(classify(&reset, true), Disconnect::Reset);
+    }
+
+    #[test]
+    fn a_failure_at_a_jump_host_is_classified_by_its_cause() {
+        let at = |inner: Failure| Failure::Jump("bastion:22".into(), Box::new(inner));
+        assert_eq!(
+            classify(&at(Failure::KeepaliveTimeout), true),
+            Disconnect::Timeout
+        );
+        assert_eq!(classify(&at(Failure::AuthFailed), true), Disconnect::Failed);
+    }
+
+    #[test]
+    fn host_key_and_proxy_setup_failures_are_never_retried() {
+        let setup = [
+            Failure::HostKeyChanged { line: 1 },
+            Failure::HostKeyCheck("unreadable".into()),
+            Failure::Proxy("exit status 1".into()),
+            Failure::BadJump("bob@".into()),
+        ];
+        for f in setup {
+            assert_eq!(classify(&f, false), Disconnect::Failed, "{f}");
+        }
+    }
 }
