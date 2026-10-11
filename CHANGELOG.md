@@ -4,6 +4,12 @@ All notable changes to tern are recorded here. The format follows [Keep a Change
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-11
+
+### Fixed
+
+- Host key verification now matches OpenSSH: tern accepts a server when any key recorded for it in `known_hosts` matches, so a stale earlier entry of the same type no longer reports the key as changed and refuses the connection (#36). The changed-key message's line number counts comment and blank lines, so it points at the offending entry as an editor shows it (#37).
+
 ## [0.1.2] - 2026-10-06
 
 ### Added
@@ -100,7 +106,8 @@ The first release: a daily-driver SSH client for macOS.
 - Secrets are held as zeroizing `SecretString`s and never logged; session output is redacted from `Debug`.
 - RUSTSEC-2023-0071 in `rsa` (via russh) is accepted for now; see [SECURITY.md](SECURITY.md) and #16.
 
-[Unreleased]: https://github.com/your-moon/tern/compare/v0.1.2...main
+[Unreleased]: https://github.com/your-moon/tern/compare/v0.1.3...main
+[0.1.3]: https://github.com/your-moon/tern/releases/tag/v0.1.3
 [0.1.2]: https://github.com/your-moon/tern/releases/tag/v0.1.2
 [0.1.1]: https://github.com/your-moon/tern/releases/tag/v0.1.1
 [0.1.0]: https://github.com/your-moon/tern/releases/tag/v0.1.0
