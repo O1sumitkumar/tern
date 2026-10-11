@@ -1,3 +1,6 @@
 target/
 .DS_Store
 .night-shift/
+# proptest writes a failing-case seed here; ours come from mutation runs, not real regressions.
+proptest-regressions/
+mutants.out*/

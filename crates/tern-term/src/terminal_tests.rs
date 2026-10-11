@@ -179,3 +179,82 @@ fn the_cursor_line_is_what_precedes_the_cursor_on_its_row() {
     t.process(b"\x1b[?25l");
     assert_eq!(t.cursor_line_text(), None);
 }
+
+mod fuzz {
+    use proptest::prelude::*;
+
+    use super::*;
+
+    /// One well-formed chunk of terminal input: text, or an escape drawn from a curated set.
+    /// Numeric params run past the grid size so clamping is exercised, not just in-range moves.
+    fn chunk() -> impl Strategy<Value = String> {
+        let n = 0u16..300;
+        prop_oneof![
+            "[ -~é世\u{1f600}]{0,24}",
+            Just("\r\n".to_string()),
+            Just("\n".to_string()),
+            Just("\r".to_string()),
+            Just("\t".to_string()),
+            Just("\x08".to_string()),
+            (n.clone(), n.clone()).prop_map(|(r, c)| format!("\x1b[{r};{c}H")),
+            (
+                n.clone(),
+                prop::sample::select(vec!['A', 'B', 'C', 'D', 'G', 'd'])
+            )
+                .prop_map(|(k, d)| format!("\x1b[{k}{d}")),
+            (
+                n.clone(),
+                prop::sample::select(vec!['L', 'M', '@', 'P', 'X', 'S', 'T'])
+            )
+                .prop_map(|(k, d)| format!("\x1b[{k}{d}")),
+            (n.clone(), n.clone()).prop_map(|(t, b)| format!("\x1b[{t};{b}r")),
+            (0u16..110).prop_map(|k| format!("\x1b[{k}m")),
+            (0u16..256, 0u16..256, 0u16..256)
+                .prop_map(|(r, g, b)| format!("\x1b[38;2;{r};{g};{b}m")),
+            (0u8..4).prop_map(|k| format!("\x1b[{k}J")),
+            (0u8..3).prop_map(|k| format!("\x1b[{k}K")),
+            prop::sample::select(vec![
+                "\x1b[?25l",
+                "\x1b[?25h",
+                "\x1b[?1049h",
+                "\x1b[?1049l",
+                "\x1b[?7l",
+                "\x1b[?7h",
+                "\x1b7",
+                "\x1b8",
+                "\x1bM",
+                "\x1bD",
+                "\x1bE",
+                "\x1bc"
+            ])
+            .prop_map(str::to_string),
+            "[ -~]{0,12}".prop_map(|t| format!("\x1b]0;{t}\x07")),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+
+        #[test]
+        fn process_never_panics_and_keeps_cursor_and_grid_in_bounds(
+            cols in 2u16..60,
+            rows in 1u16..30,
+            chunks in prop::collection::vec(chunk(), 0..60),
+        ) {
+            let mut t = term(cols, rows);
+            // Feed in two calls so a sequence can straddle the boundary, as real reads do.
+            let bytes = chunks.concat().into_bytes();
+            let (a, b) = bytes.split_at(bytes.len() / 2);
+            t.process(a);
+            t.process(b);
+
+            prop_assert_eq!((t.cols(), t.rows()), (cols as usize, rows as usize));
+            let point = t.term.grid().cursor.point;
+            prop_assert!(point.line.0 >= 0 && (point.line.0 as usize) < rows as usize, "line {point:?}");
+            prop_assert!(point.column.0 < cols as usize, "column {point:?}");
+            // The public viewport view stays consistent with the configured size too.
+            prop_assert_eq!(t.lines().len(), rows as usize);
+            prop_assert!(t.lines().iter().all(|l| l.len() == cols as usize));
+        }
+    }
+}

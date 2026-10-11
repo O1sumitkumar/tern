@@ -275,4 +275,186 @@ mod tests {
         };
         assert_eq!(connections(text).unwrap()[0].1, c);
     }
+
+    // ---- properties and fault input -------------------------------------------------------
+
+    use proptest::prelude::*;
+
+    /// One connection's state on (base, local, remote): `None` is absent, `Some(k)` is host `h{k}`.
+    type State = (Option<u8>, Option<u8>, Option<u8>);
+
+    fn host_of(k: u8) -> String {
+        format!("h{k}")
+    }
+
+    /// A side's well-formed connection list; `n{i}` names are unique by construction.
+    fn side(states: &[State], pick: fn(&State) -> Option<u8>, reversed: bool) -> Vec<Value> {
+        let mut list: Vec<Value> = states
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| pick(s).map(|k| conn(&format!("n{i}"), &host_of(k))))
+            .collect();
+        if reversed {
+            list.reverse();
+        }
+        list
+    }
+
+    fn states() -> impl Strategy<Value = Vec<State>> {
+        let host = prop::option::of(0u8..3);
+        prop::collection::vec((host.clone(), host.clone(), host), 0..6)
+    }
+
+    fn file_v(version: u64, list: &[Value]) -> String {
+        serde_json::to_string_pretty(&json!({"version": version, "connections": list})).unwrap()
+    }
+
+    fn out_conns(m: &HostsMerge) -> Vec<(String, Value)> {
+        let HostsMerge::Merged(text) = m else {
+            unreachable!("{m:?}")
+        };
+        connections(text).unwrap()
+    }
+
+    proptest! {
+        #[test]
+        fn a_change_on_one_side_is_never_lost(
+            base_hosts in prop::collection::vec(0u8..3, 0..5),
+            edited in prop::collection::vec(any::<bool>(), 5),
+            added in 0usize..4,
+            changed_is_local in any::<bool>(),
+        ) {
+            let base: Vec<Value> = base_hosts
+                .iter()
+                .enumerate()
+                .map(|(i, k)| conn(&format!("n{i}"), &host_of(*k)))
+                .collect();
+            let mut changed: Vec<Value> = base
+                .iter()
+                .enumerate()
+                .map(|(i, c)| if edited[i] { conn(&format!("n{i}"), &format!("edited{i}")) } else { c.clone() })
+                .collect();
+            changed.extend((0..added).map(|j| conn(&format!("a{j}"), &format!("new{j}"))));
+
+            let m = if changed_is_local {
+                merged(&base, &changed, &base)
+            } else {
+                merged(&base, &base, &changed)
+            };
+            prop_assert!(matches!(m, HostsMerge::Merged(_)), "{:?}", m);
+            let out: Vec<Value> = out_conns(&m).into_iter().map(|(_, v)| v).collect();
+            for c in &changed {
+                prop_assert!(out.contains(c), "lost {c} from {out:?}");
+            }
+            prop_assert_eq!(out.len(), changed.len());
+        }
+
+        #[test]
+        fn merge_is_deterministic_and_keeps_local_order_then_remote_only(s in states()) {
+            let (base, local) = (side(&s, |t| t.0, false), side(&s, |t| t.1, false));
+            // The remote lists its connections in the opposite order, so order is observable.
+            let remote = side(&s, |t| t.2, true);
+            let (a, b) = (
+                merge_hosts(&file(&base), &file(&local), &file(&remote)).unwrap(),
+                merge_hosts(&file(&base), &file(&local), &file(&remote)).unwrap(),
+            );
+            prop_assert_eq!(&a, &b);
+            if let HostsMerge::Merged(_) = a {
+                let name = |v: &Value| v["name"].as_str().unwrap().to_owned();
+                let out: Vec<String> = out_conns(&a).into_iter().map(|(n, _)| n).collect();
+                let local_names: Vec<String> = local.iter().map(name).collect();
+                let remote_only: Vec<String> = remote
+                    .iter()
+                    .map(name)
+                    .filter(|n| !local_names.contains(n))
+                    .collect();
+                let expected: Vec<String> = local_names
+                    .iter()
+                    .chain(&remote_only)
+                    .filter(|n| out.contains(n))
+                    .cloned()
+                    .collect();
+                prop_assert_eq!(out, expected);
+            }
+        }
+
+        #[test]
+        fn identical_change_on_both_sides_is_not_a_conflict(s in states()) {
+            // Whatever base was, both sides ended up with the local state.
+            let both: Vec<State> = s.iter().map(|t| (t.0, t.1, t.1)).collect();
+            let (base, local) = (side(&both, |t| t.0, false), side(&both, |t| t.1, false));
+            let m = merged(&base, &local, &local);
+            prop_assert!(matches!(m, HostsMerge::Merged(_)), "{:?}", m);
+            let out: Vec<Value> = out_conns(&m).into_iter().map(|(_, v)| v).collect();
+            prop_assert_eq!(out, local);
+        }
+
+        #[test]
+        fn same_connection_changed_differently_is_a_conflict(rest in states()) {
+            // n0: base h0, local h1, remote h2. Noise on the other names cannot hide it.
+            let mut s: Vec<State> = vec![(Some(0), Some(1), Some(2))];
+            s.extend(rest);
+            let m = merged(
+                &side(&s, |t| t.0, false),
+                &side(&s, |t| t.1, false),
+                &side(&s, |t| t.2, false),
+            );
+            match m {
+                HostsMerge::Conflict(names) => prop_assert!(names.contains(&"n0".to_owned()), "{names:?}"),
+                HostsMerge::Merged(_) => prop_assert!(false, "n0 conflict went through"),
+            }
+        }
+
+        #[test]
+        fn a_truncated_hosts_file_is_an_error_not_a_panic(
+            s in states(),
+            cut in 0.0f64..1.0,
+        ) {
+            let text = file(&side(&s, |t| t.1, false));
+            let mut at = (text.len() as f64 * cut) as usize;
+            while !text.is_char_boundary(at) {
+                at -= 1;
+            }
+            let prefix = &text[..at];
+            prop_assume!(!prefix.trim().is_empty());
+            prop_assert!(merge_hosts(prefix, &text, &text).is_err());
+            prop_assert!(merge_hosts(&text, prefix, &text).is_err());
+            prop_assert!(merge_hosts(&text, &text, prefix).is_err());
+        }
+    }
+
+    #[test]
+    #[ignore = "blocked on #28: merge_hosts hardcodes version 1"]
+    fn merged_output_keeps_the_input_version() {
+        let local = file_v(2, &[conn("web", "1.1.1.1")]);
+        let remote = file_v(2, &[conn("web", "1.1.1.1"), conn("db", "2.2.2.2")]);
+        let HostsMerge::Merged(out) = merge_hosts(&local, &local, &remote).unwrap() else {
+            unreachable!("remote only added a host")
+        };
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["version"], json!(2), "silently downgraded: {out}");
+    }
+
+    #[test]
+    fn malformed_hosts_text_is_an_error_in_every_position() {
+        let good = file(&[conn("web", "1.1.1.1")]);
+        let bad = [
+            "{",
+            "not json",
+            "[]",
+            "null",
+            "{}",
+            r#"{"version": 1}"#,
+            r#"{"connections": {}}"#,
+            r#"{"connections": "web"}"#,
+            r#"{"connections": [{"host": "1.1.1.1"}]}"#,
+            r#"{"connections": [{"name": 7}]}"#,
+        ];
+        for b in bad {
+            assert!(connections(b).is_err(), "connections accepted {b:?}");
+            assert!(merge_hosts(b, &good, &good).is_err(), "base {b:?}");
+            assert!(merge_hosts(&good, b, &good).is_err(), "local {b:?}");
+            assert!(merge_hosts(&good, &good, b).is_err(), "remote {b:?}");
+        }
+    }
 }

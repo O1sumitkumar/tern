@@ -77,6 +77,19 @@ mod tests {
         );
     }
 
+    /// The private `wrap_with` is used above for speed; this exercises the public `wrap` at its
+    /// real work factor, so the actual PIN-seal path round-trips and an empty/garbage seal fails.
+    #[test]
+    fn the_public_wrap_round_trips_through_unwrap() {
+        let pass = secret("battery horse é\nstaple ");
+        let blob = wrap(&pass, "4821").unwrap();
+        assert!(!blob.is_empty(), "an empty seal would open to nothing");
+        assert_eq!(
+            unwrap(&blob, "4821").unwrap().expose_secret(),
+            pass.expose_secret()
+        );
+    }
+
     #[test]
     fn a_wrong_pin_opens_nothing() {
         let blob = wrap_with(&secret("pass"), "4821", 10).unwrap();

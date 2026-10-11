@@ -442,6 +442,68 @@ mod tests {
         assert!(!dir.join("settings.json.tmp").exists());
     }
 
+    /// A crash between the temp write and the rename leaves a garbage `.tmp` beside the good
+    /// file; `load` reads the committed file and the next `save` replaces the stray.
+    #[test]
+    fn a_stray_tmp_beside_a_good_file_changes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let good = Settings {
+            sidebar_width: 300.0,
+            cursor_blink: true,
+            ..Settings::default()
+        };
+        good.save(dir.path()).unwrap();
+        std::fs::write(dir.path().join("settings.json.tmp"), "{ half writ").unwrap();
+        assert_eq!(Settings::load(dir.path()), good);
+
+        let next = Settings {
+            sidebar_width: 280.0,
+            ..good
+        };
+        next.save(dir.path()).unwrap();
+        assert_eq!(Settings::load(dir.path()), next);
+    }
+
+    /// The rename never happened: only the `.tmp` exists. It is not the settings file.
+    #[test]
+    fn a_tmp_without_the_real_file_is_not_loaded() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("settings.json.tmp"),
+            r#"{"sidebarWidth":333}"#,
+        )
+        .unwrap();
+        assert_eq!(Settings::load(dir.path()), Settings::default());
+    }
+
+    /// CURRENT behaviour, pinned so a change to it is deliberate: a file that does not parse
+    /// is replaced by defaults in memory (see `settings_corrupt_using_defaults`), with no
+    /// version to tell "corrupt" from "written by a newer tern". Gap tracked in #28; the
+    /// desired behaviour is the ignored test below.
+    #[test]
+    fn today_an_unparseable_file_silently_gives_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(FILE_NAME), r#"{"sidebarWidth": "wide""#).unwrap();
+        assert_eq!(Settings::load(dir.path()), Settings::default());
+    }
+
+    /// DESIRED behaviour (#28): like hosts.json and snippets.json, an unreadable or newer
+    /// settings file is kept as it is. Saving what `load` returned must not overwrite it.
+    #[test]
+    #[ignore = "#28: settings should carry a version and refuse to save over an unreadable/newer file, not silently reset"]
+    fn an_unreadable_or_newer_file_is_not_overwritten_by_a_save() {
+        for original in [
+            r#"{"sidebarWidth": "wide""#,
+            r#"{"version": 99, "sidebarWidth": 300, "someFutureField": true}"#,
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join(FILE_NAME);
+            std::fs::write(&path, original).unwrap();
+            let _ = Settings::load(dir.path()).save(dir.path());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        }
+    }
+
     #[test]
     fn corrupt_file_gives_defaults() {
         let dir = temp_dir("corrupt");

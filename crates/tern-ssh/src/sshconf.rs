@@ -171,4 +171,29 @@ mod tests {
         let t = "# Host a\n\nHost a\n  # User x\n  User y\n";
         assert_eq!(all(&directives(t, "a"), "user"), ["y"]);
     }
+
+    #[test]
+    fn one_host_line_with_several_names_applies_to_each_and_negation_excludes() {
+        let t = "Host alpha beta *.lan !gamma\n  User ops\n";
+        for name in ["alpha", "beta", "x.lan"] {
+            assert_eq!(first(&directives(t, name), "user"), Some("ops"), "{name}");
+        }
+        assert_eq!(first(&directives(t, "gamma"), "user"), None);
+        assert_eq!(first(&directives(t, "delta"), "user"), None);
+    }
+
+    #[test]
+    fn keyword_separators_are_equals_or_tab_and_arguments_keep_their_case() {
+        let t = "Host a\n  Port = 2200\n  IdentityFile\t/Keys/Web\n  User=carol\n";
+        let d = directives(t, "a");
+        assert_eq!(first(&d, "port"), Some("2200"));
+        assert_eq!(first(&d, "identityfile"), Some("/Keys/Web"));
+        assert_eq!(first(&d, "user"), Some("carol"));
+    }
+
+    #[test]
+    fn bare_keyword_line_is_skipped_without_ending_its_block() {
+        let t = "Host a\n  Compression\n  User after\n";
+        assert_eq!(all(&directives(t, "a"), "user"), ["after"]);
+    }
 }

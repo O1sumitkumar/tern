@@ -154,6 +154,47 @@ mod tests {
         assert!(matches!(load(dir.path()), Err(StoreError::Unreadable(_))));
     }
 
+    /// A crash between the temp write and the rename leaves a garbage `.tmp` beside the good
+    /// file; `load` reads the committed file and the next `save` replaces the stray.
+    #[test]
+    fn a_stray_tmp_beside_a_good_file_changes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = vec![validate("df", "df -h\n", &[]).unwrap()];
+        save(dir.path(), &first).unwrap();
+        std::fs::write(dir.path().join("snippets.json.tmp"), "{ half writ").unwrap();
+        assert_eq!(load(dir.path()).unwrap(), first);
+
+        let second = vec![
+            validate("df", "df -h\n", &[]).unwrap(),
+            validate("top", "top -o cpu", &[]).unwrap(),
+        ];
+        save(dir.path(), &second).unwrap();
+        assert_eq!(load(dir.path()).unwrap(), second);
+    }
+
+    /// The rename never happened: only the `.tmp` exists. It is not the snippets file.
+    #[test]
+    fn a_tmp_without_the_real_file_is_not_loaded() {
+        let dir = tempfile::tempdir().unwrap();
+        let tmp = r#"{"version":1,"snippets":[{"name":"ghost","command":"ls"}]}"#;
+        std::fs::write(dir.path().join("snippets.json.tmp"), tmp).unwrap();
+        assert!(load(dir.path()).unwrap().is_empty());
+    }
+
+    /// A file from a newer tern is refused, and left exactly as it was.
+    #[test]
+    fn a_newer_version_is_refused_and_left_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE_NAME);
+        let newer = format!(
+            r#"{{"version":{},"snippets":[{{"name":"df","command":"df -h"}}]}}"#,
+            VERSION + 1
+        );
+        std::fs::write(&path, &newer).unwrap();
+        assert!(matches!(load(dir.path()), Err(StoreError::Unreadable(_))));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), newer);
+    }
+
     #[test]
     fn preview_marks_running_snippets_and_hides_the_newline() {
         assert_eq!(super::preview("df -h\n"), "df -h  ↵");

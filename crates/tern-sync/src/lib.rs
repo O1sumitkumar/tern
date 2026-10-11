@@ -67,6 +67,8 @@ pub fn decide(local: &str, remote: Option<&str>, last: Option<&str>) -> Plan {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
 
     fn files(pairs: &[(&str, &str)]) -> Files {
@@ -107,5 +109,79 @@ mod tests {
             "changed byte"
         );
         assert_eq!(base.len(), 64);
+    }
+
+    /// No files hashes as SHA-256 of zero bytes, the standard empty-input vector.
+    #[test]
+    fn the_empty_bundle_has_the_sha256_of_no_input() {
+        assert_eq!(
+            hash(&Files::new()),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    /// A file that exists but is empty is a different bundle from no file at all, so a sync
+    /// cannot mistake "the user cleared this file" for "this file was never there".
+    #[test]
+    fn a_present_empty_file_is_not_an_absent_file() {
+        assert_ne!(hash(&files(&[("hosts.json", "")])), hash(&Files::new()));
+    }
+
+    /// The fingerprint is persisted in `tern-meta.json` and compared across Macs and app
+    /// versions, so its byte layout is a wire format. This pins it: for each file, the name,
+    /// a 0 byte, the length as u64 little-endian, then the bytes, hashed in name order. The
+    /// expected digest was computed outside this crate with `shasum -a 256` over those bytes.
+    #[test]
+    fn a_two_file_bundle_matches_its_documented_layout() {
+        let bundle = files(&[("settings.json", "{}"), ("hosts.json", "[]")]);
+        assert_eq!(
+            hash(&bundle),
+            "4583a05901e21bba5a8c695e214b9dd4f34e2b0dce8b261318afc15a8312cff5"
+        );
+    }
+
+    use proptest::prelude::*;
+
+    /// A bundle of one to four config-like files, each with non-empty printable contents.
+    fn any_bundle() -> impl Strategy<Value = Files> {
+        prop::collection::btree_map(
+            "[a-z]{1,8}\\.json",
+            "[ -~]{1,64}".prop_map(String::into_bytes),
+            1..5,
+        )
+    }
+
+    proptest! {
+        /// Flipping one bit of one byte, in any file at any offset, changes the fingerprint.
+        #[test]
+        fn any_single_changed_byte_changes_the_fingerprint(
+            bundle in any_bundle(),
+            which_file in any::<prop::sample::Index>(),
+            which_byte in any::<prop::sample::Index>(),
+        ) {
+            let names: Vec<String> = bundle.keys().cloned().collect();
+            let name = &names[which_file.index(names.len())];
+            let mut changed = bundle.clone();
+            let bytes = changed.get_mut(name).unwrap();
+            let at = which_byte.index(bytes.len());
+            bytes[at] ^= 0x01;
+            prop_assert_ne!(hash(&bundle), hash(&changed));
+        }
+
+        /// The same content divided between two files at a different point is a different
+        /// bundle: the fingerprint sees where one file ends and the next begins.
+        #[test]
+        fn moving_the_split_point_changes_the_fingerprint(
+            content in "[a-z]{2,40}",
+            first_cut in any::<prop::sample::Index>(),
+            second_cut in any::<prop::sample::Index>(),
+        ) {
+            let len = content.len();
+            let i = 1 + first_cut.index(len - 1);
+            let j = 1 + second_cut.index(len - 1);
+            prop_assume!(i != j);
+            let split_at = |k: usize| files(&[("a.json", &content[..k]), ("b.json", &content[k..])]);
+            prop_assert_ne!(hash(&split_at(i)), hash(&split_at(j)));
+        }
     }
 }
