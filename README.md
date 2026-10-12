@@ -5,8 +5,8 @@
 <h1 align="center">tern</h1>
 
 <p align="center">
-  A fast, native SSH client for macOS, written in Rust on <a href="https://github.com/zed-industries/zed/tree/main/crates/gpui">GPUI</a>.<br>
-  Your servers one click away, passwords that fill themselves, and a window you'll enjoy looking at.
+  A native SSH client for macOS, written in Rust on <a href="https://github.com/zed-industries/zed/tree/main/crates/gpui">GPUI</a>.<br>
+  Saved hosts, SFTP, splits and snippets, with passwords from your own password manager.
 <br>
   <a href="https://tern.carrot-soft.tech">Website: https://tern.carrot-soft.tech</a>
 </p>
@@ -17,11 +17,11 @@
 
 ## Why tern
 
-- **One click to a shell.** Saved connections in groups, ⌘K to jump to any of them, and a status line with latency and session time.
-- **Passwords that stay out of the way.** Logins come from your SSH key, your password manager (`gopass show -o …`), or tern's encrypted vault. At a `sudo` prompt, **⌘\\** types the password for you.
-- **Built for real work.** Split panes, find in scrollback, clickable links, snippets, SFTP file browser, port forwards, ProxyJump, agent forwarding, broadcast input, session logs, and automatic reconnect.
-- **Your setup, backed up.** Hosts, snippets and settings sync to a private Git repository you own, encrypted end to end.
-- **Native and light.** About 85 MB in Activity Monitor with a wallpaper showing (measured, [docs/perf.md](docs/perf.md)). It reads crisp on 1080p monitors, and sits on frosted glass over a wallpaper of your choice.
+tern does what Termius and Tabby do for a list of servers: saved hosts, ⌘K to any of them, SFTP, splits, snippets and port forwards. It runs as one native process, and one connected tab takes 76 MB where Tabby takes 580 MB ([Memory](#memory)).
+
+Passwords come from your SSH key, from a password-manager command such as `gopass show -o work/ssh/web-01`, or from tern's age-encrypted vault. At a `sudo` prompt, ⌘\\ types the password. It never types one on its own.
+
+Hosts, snippets and settings sync to a private Git repository you own. They are encrypted on your Mac first, so the repository only holds `.age` files.
 
 <p align="center">
   <img src="docs/screenshots/terminal.jpg" alt="A session on web-01 running htop, with the status line showing Connected, 1 ms and session time" width="900">
@@ -33,7 +33,7 @@
 | --- | --- |
 | <img src="docs/screenshots/docker.jpg" alt="sudo docker ps with the sudo password filled by ⌘\"><br>**⌘\\ fills `sudo`**: the password comes from your password manager, typed only when you ask and only at a password prompt. | <img src="docs/screenshots/snippets.jpg" alt="The snippets picker filtering docker commands"><br>**Snippets (⇧⌘S)**: saved commands. ↵ marks the ones that run when picked; the rest are typed for you to finish. |
 | <img src="docs/screenshots/split.jpg" alt="Two panes side by side with find in scrollback"><br>**Splits and find**: ⌘D and ⌘⇧D split a tab; ⌘F searches the scrollback. | <img src="docs/screenshots/sftp.jpg" alt="The SFTP side panel listing a remote home folder"><br>**Files (⇧⌘O)**: browse the remote side over SFTP; download, or drop files to upload. |
-| <img src="docs/screenshots/settings.jpg" alt="Settings, Appearance, with the wallpaper gallery"><br>**Make it yours**: seven public-domain artworks built in, or any image; light, dark or follow macOS; any monospace font. | <img src="docs/screenshots/light.jpg" alt="tern in light appearance over Van Gogh's Wheat Field"><br>**Light and dark**: the window takes its colours from the wallpaper, and every text colour stays at least 4.5:1. |
+| <img src="docs/screenshots/settings.jpg" alt="Settings, Appearance, with the wallpaper gallery"><br>**Wallpapers and fonts**: seven public-domain artworks built in, or any image; light, dark or follow macOS; any monospace font. | <img src="docs/screenshots/light.jpg" alt="tern in light appearance over Van Gogh's Wheat Field"><br>**Light and dark**: the window takes its colours from the wallpaper, and every text colour stays at least 4.5:1. |
 
 ## Features
 
@@ -59,7 +59,7 @@
 - It runs on its own when something changes and every few minutes. When both sides changed, it merges per file and per host, and only asks about a real conflict.
 
 **Look**
-- zeron-style chrome, tinted to your wallpaper. Panels are frosted glass over one backdrop, and the picture shows sharp in the empty view.
+- Panels are frosted glass over your wallpaper and take their tint from it; the picture shows sharp when no session is open. The layout follows [zeron](https://github.com/zeronsh/zeron).
 - Light, dark or system appearance. A "sharper text" mode for 1× monitors. Reduce motion follows macOS.
 
 ## Memory
@@ -72,7 +72,7 @@ tern against the other two SSH clients, on the same Mac, the same day (2026-10-0
 | Tabby | 471 MB | 580 MB | 5 (Electron) |
 | Termius | 583 MB | not measured | 7 (Electron) |
 
-Connected, tern needs between a quarter and an eighth of Tabby's memory; idle, between a fifth and a seventh of either app's. The method, raw samples and the plain terminals (Terminal, iTerm2, Ghostty) are in [docs/perf.md](docs/perf.md).
+Connected, tern uses 76 MB against Tabby's 580 MB, or 125 MB with a wallpaper. The lead is over Electron apps: OxideTerm, another GPUI SSH client, reports 81 MB idle for itself (not measured here). The method, raw samples and the plain terminals (Terminal, iTerm2, Ghostty) are in [docs/perf.md](docs/perf.md).
 
 ## Keyboard
 
