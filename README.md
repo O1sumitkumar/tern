@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/hero.jpg" alt="tern: hosts grouped in a frosted sidebar over Hokusai's Great Wave" width="900">
+  <img src="docs/screenshots/demo.gif" alt="⌘K finds web-01, tern connects, runs docker ps, then ⌘\ fills the sudo password" width="900">
 </p>
 
 ## Why tern
@@ -24,7 +24,7 @@ Passwords come from your SSH key, from a password-manager command such as `gopas
 Hosts, snippets and settings sync to a private Git repository you own. They are encrypted on your Mac first, so the repository only holds `.age` files.
 
 <p align="center">
-  <img src="docs/screenshots/terminal.jpg" alt="A session on web-01 running htop, with the status line showing Connected, 1 ms and session time" width="900">
+  <img src="docs/screenshots/hero.jpg" alt="tern: hosts grouped in a frosted sidebar over Hokusai's Great Wave" width="900">
 </p>
 
 ## A closer look
