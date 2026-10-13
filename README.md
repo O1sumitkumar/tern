@@ -90,6 +90,8 @@ Every shortcut can be rebound in Settings → Shortcuts.
 
 ## Install
 
+**Homebrew:** `brew install --cask your-moon/tern/tern`
+
 **Download:** get `tern-<version>-macos-arm64.dmg` from [Releases](https://github.com/your-moon/tern/releases), open it, and drag tern to Applications. Releases are signed with a Developer ID and notarised by Apple, so it opens without a warning.
 
 **Windows and Linux (preview):** `tern-<version>-windows-x86_64.zip` and `tern-<version>-linux-<arch>.tar.gz` are on the same Releases page. They build and pass the tests in CI but have not been run on a real Windows or Linux desktop yet; reports are welcome. Shortcuts there use Ctrl+Shift / Ctrl+Alt in place of ⌘ (table in `crates/tern/src/keymap.rs`).
