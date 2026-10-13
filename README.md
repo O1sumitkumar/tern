@@ -106,6 +106,23 @@ cp -R target/release/bundle/tern.app /Applications/
 cargo install --locked --path crates/tern   # the `tern` command (tern <host>, tern vault init)
 ```
 
+**Linux (Debian/Ubuntu):** these are the packages CI installs on `ubuntu-latest` before `cargo build --release -p tern` (see `.github/workflows/build.yml`). Other distributions need the equivalents.
+
+```sh
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends \
+  build-essential cmake clang pkg-config \
+  libasound2-dev libfontconfig-dev libssl-dev libzstd-dev \
+  libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev \
+  libx11-xcb-dev libxcb1-dev libxcb-xkb-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+  libvulkan-dev libdbus-1-dev
+git clone https://github.com/your-moon/tern && cd tern
+cargo build --release -p tern
+```
+
+**Windows:** after installing a Rust toolchain targeting `x86_64-pc-windows-msvc`, the same `cargo build --release -p tern` produces the binary CI packages.
+
+
 ## Security
 
 - Host keys are checked against `~/.ssh/known_hosts`. A changed key refuses the connection.
